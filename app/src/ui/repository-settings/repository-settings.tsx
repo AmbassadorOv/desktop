@@ -11,6 +11,16 @@ import { Dialog, DialogError, DialogFooter } from '../dialog'
 import { NoRemote } from './no-remote'
 import { readGitIgnoreAtRoot } from '../../lib/git'
 import { OkCancelButtonGroup } from '../dialog/ok-cancel-button-group'
+import { GitConfigLocation, GitConfig } from './git-config'
+import {
+  getConfigValue,
+  getGlobalConfigValue,
+  setConfigValue,
+} from '../../lib/git/config'
+import {
+  gitAuthorNameIsValid,
+  invalidGitAuthorNameMessage,
+} from '../lib/identifier-rules'
 
 interface IRepositorySettingsProps {
   readonly dispatcher: Dispatcher
@@ -22,6 +32,7 @@ interface IRepositorySettingsProps {
 enum RepositorySettingsTab {
   Remote = 0,
   IgnoredFiles,
+  GitConfig,
 }
 
 interface IRepositorySettingsState {
@@ -30,6 +41,14 @@ interface IRepositorySettingsState {
   readonly ignoreText: string | null
   readonly ignoreTextHasChanged: boolean
   readonly disabled: boolean
+  readonly saveDisabled: boolean
+  readonly gitConfigLocation: GitConfigLocation
+  readonly committerName: string
+  readonly committerEmail: string
+  readonly globalCommitterName: string
+  readonly globalCommitterEmail: string
+  readonly initialCommitterName: string | null
+  readonly initialCommitterEmail: string | null
   readonly errors?: ReadonlyArray<JSX.Element | string>
 }
 
@@ -46,6 +65,14 @@ export class RepositorySettings extends React.Component<
       ignoreText: null,
       ignoreTextHasChanged: false,
       disabled: false,
+      saveDisabled: false,
+      gitConfigLocation: GitConfigLocation.Global,
+      committerName: '',
+      committerEmail: '',
+      globalCommitterName: '',
+      globalCommitterEmail: '',
+      initialCommitterName: null,
+      initialCommitterEmail: null,
     }
   }
 
@@ -62,6 +89,38 @@ export class RepositorySettings extends React.Component<
       )
       this.setState({ errors: [`Could not read root .gitignore: ${e}`] })
     }
+
+    const initialCommitterName = await getConfigValue(
+      this.props.repository,
+      'user.name'
+    )
+    const initialCommitterEmail = await getConfigValue(
+      this.props.repository,
+      'user.email'
+    )
+
+    const globalCommitterName = (await getGlobalConfigValue('user.name')) || ''
+    const globalCommitterEmail =
+      (await getGlobalConfigValue('user.email')) || ''
+
+    let gitConfigLocation =
+      initialCommitterName === globalCommitterName &&
+      initialCommitterEmail === globalCommitterEmail
+        ? GitConfigLocation.Global
+        : GitConfigLocation.Local
+
+    let committerName = initialCommitterName || ''
+    let committerEmail = initialCommitterEmail || ''
+
+    this.setState({
+      gitConfigLocation,
+      committerName,
+      committerEmail,
+      globalCommitterName,
+      globalCommitterEmail,
+      initialCommitterName,
+      initialCommitterEmail,
+    })
   }
 
   private renderErrors(): JSX.Element[] | null {
@@ -94,6 +153,7 @@ export class RepositorySettings extends React.Component<
         >
           <span>Remote</span>
           <span>{__DARWIN__ ? 'Ignored Files' : 'Ignored files'}</span>
+          <span>{__DARWIN__ ? 'Git Config' : 'Git config'}</span>
         </TabBar>
 
         {this.renderActiveTab()}
@@ -111,7 +171,10 @@ export class RepositorySettings extends React.Component<
 
     return (
       <DialogFooter>
-        <OkCancelButtonGroup okButtonText="Save" />
+        <OkCancelButtonGroup
+          okButtonText="Save"
+          okButtonDisabled={this.state.saveDisabled}
+        />
       </DialogFooter>
     )
   }
@@ -138,6 +201,20 @@ export class RepositorySettings extends React.Component<
             text={this.state.ignoreText}
             onIgnoreTextChanged={this.onIgnoreTextChanged}
             onShowExamples={this.onShowGitIgnoreExamples}
+          />
+        )
+      }
+      case RepositorySettingsTab.GitConfig: {
+        return (
+          <GitConfig
+            gitConfigLocation={this.state.gitConfigLocation}
+            onGitConfigLocationChanged={this.onGitConfigLocationChanged}
+            name={this.state.committerName}
+            email={this.state.committerEmail}
+            globalName={this.state.globalCommitterName}
+            globalEmail={this.state.globalCommitterEmail}
+            onNameChanged={this.onCommitterNameChanged}
+            onEmailChanged={this.onCommitterEmailChanged}
           />
         )
       }
@@ -198,6 +275,26 @@ export class RepositorySettings extends React.Component<
       }
     }
 
+    if (this.state.committerName !== this.state.initialCommitterName) {
+      await setConfigValue(
+        this.props.repository,
+        'user.name',
+        this.state.gitConfigLocation === GitConfigLocation.Global
+          ? this.state.globalCommitterName
+          : this.state.committerName
+      )
+    }
+
+    if (this.state.committerEmail !== this.state.initialCommitterEmail) {
+      await setConfigValue(
+        this.props.repository,
+        'user.email',
+        this.state.gitConfigLocation === GitConfigLocation.Global
+          ? this.state.globalCommitterEmail
+          : this.state.committerEmail
+      )
+    }
+
     if (!errors.length) {
       this.props.onDismissed()
     } else {
@@ -222,5 +319,26 @@ export class RepositorySettings extends React.Component<
 
   private onTabClicked = (index: number) => {
     this.setState({ selectedTab: index })
+  }
+
+  private onGitConfigLocationChanged = (value: GitConfigLocation) => {
+    this.setState({ gitConfigLocation: value })
+  }
+
+  private onCommitterNameChanged = (committerName: string) => {
+    const errors = new Array<JSX.Element | string>()
+
+    if (gitAuthorNameIsValid(committerName)) {
+      this.setState({ saveDisabled: false })
+    } else {
+      this.setState({ saveDisabled: true })
+      errors.push(invalidGitAuthorNameMessage)
+    }
+
+    this.setState({ committerName, errors })
+  }
+
+  private onCommitterEmailChanged = (committerEmail: string) => {
+    this.setState({ committerEmail })
   }
 }
