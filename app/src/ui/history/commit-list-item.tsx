@@ -12,6 +12,7 @@ import { IGitHubUser } from '../../lib/databases/github-user-database'
 import { AvatarStack } from '../lib/avatar-stack'
 import { IMenuItem } from '../../lib/menu-item'
 import { Octicon, OcticonSymbol } from '../octicons'
+import { enableGitTagsCreation } from '../../lib/feature-flag'
 
 interface ICommitProps {
   readonly gitHubRepository: GitHubRepository | null
@@ -20,6 +21,7 @@ interface ICommitProps {
   readonly isLocal: boolean
   readonly onRevertCommit?: (commit: Commit) => void
   readonly onViewCommitOnGitHub?: (sha: string) => void
+  readonly onCreateTag?: (targetCommitSha: string) => void
   readonly gitHubUsers: Map<string, IGitHubUser> | null
   readonly showUnpushedIndicator: boolean
 }
@@ -59,7 +61,9 @@ export class CommitListItem extends React.Component<
 
   public render() {
     const commit = this.props.commit
-    const author = commit.author
+    const {
+      author: { date },
+    } = commit
 
     return (
       <div className="commit" onContextMenu={this.onContextMenu}>
@@ -76,8 +80,8 @@ export class CommitListItem extends React.Component<
               <CommitAttribution
                 gitHubRepository={this.props.gitHubRepository}
                 commit={commit}
-              />{' '}
-              <RelativeTime date={author.date} />
+              />
+              {renderRelativeTime(date)}
             </div>
           </div>
         </div>
@@ -120,6 +124,12 @@ export class CommitListItem extends React.Component<
     }
   }
 
+  private onCreateTag = () => {
+    if (this.props.onCreateTag) {
+      this.props.onCreateTag(this.props.commit.sha)
+    }
+  }
+
   private onContextMenu = (event: React.MouseEvent<any>) => {
     event.preventDefault()
 
@@ -143,6 +153,17 @@ export class CommitListItem extends React.Component<
         },
         enabled: this.props.onRevertCommit !== undefined,
       },
+    ]
+
+    if (enableGitTagsCreation()) {
+      items.push({
+        label: 'Create Tag…',
+        action: this.onCreateTag,
+        enabled: this.props.onCreateTag !== undefined,
+      })
+    }
+
+    items.push(
       { type: 'separator' },
       {
         label: 'Copy SHA',
@@ -152,9 +173,18 @@ export class CommitListItem extends React.Component<
         label: viewOnGitHubLabel,
         action: this.onViewOnGitHub,
         enabled: !this.props.isLocal && !!gitHubRepository,
-      },
-    ]
+      }
+    )
 
     showContextualMenu(items)
   }
+}
+
+function renderRelativeTime(date: Date) {
+  return (
+    <>
+      {` • `}
+      <RelativeTime date={date} abbreviate={true} />
+    </>
+  )
 }
